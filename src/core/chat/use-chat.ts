@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { ChatService, type ChatServiceCallbacks } from "./chat-service";
 import type { Message } from "../messages/types";
+import { mergeMessage } from "../messages/merge-messages";
 
 export interface UseChatOptions {
   baseUrl?: string;
@@ -116,89 +117,35 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           params,
           { abortSignal: abortControllerRef.current.signal },
         )) {
-          switch (event.type) {
-            case "message_chunk":
-              if (!currentMessage) {
-                // Start new assistant message
-                currentMessage = {
-                  id: event.data.id,
-                  threadId: event.data.thread_id,
-                  agent: event.data.agent,
-                  role: "assistant",
-                  content: event.data.content || "",
-                  contentChunks: [event.data.content || ""],
-                  isStreaming: true,
-                };
-                callbacks.onMessageStart?.(currentMessage);
-              } else {
-                // Update existing message - create new object to ensure React detects change
-                currentMessage = {
-                  ...currentMessage,
-                  content: currentMessage.content + (event.data.content || ""),
-                  contentChunks: [...currentMessage.contentChunks, event.data.content || ""],
-                };
-                callbacks.onMessageUpdate?.(currentMessage);
-              }
-              break;
-
-            case "tool_calls":
-              if (currentMessage) {
-                currentMessage = {
-                  ...currentMessage,
-                  toolCalls: event.data.tool_calls.map((tc) => ({
-                    id: tc.id,
-                    name: tc.name,
-                    args: tc.args,
-                  })),
-                };
-                callbacks.onMessageUpdate?.(currentMessage);
-              }
-              break;
-
-            case "tool_call_result":
-              if (currentMessage && currentMessage.toolCalls) {
-                const updatedToolCalls = currentMessage.toolCalls.map((tc) =>
-                  tc.id === event.data.tool_call_id
-                    ? { ...tc, result: event.data.content }
-                    : tc
-                );
-                currentMessage = {
-                  ...currentMessage,
-                  toolCalls: updatedToolCalls,
-                };
-                callbacks.onMessageUpdate?.(currentMessage);
-              }
-              break;
-
-            case "interrupt":
-              if (currentMessage) {
-                currentMessage = {
-                  ...currentMessage,
-                  options: event.data.options,
-                  finishReason: "interrupt",
-                };
-                callbacks.onMessageUpdate?.(currentMessage);
-              }
-              break;
+          console.log(event, "Checkkk");
+          if (!currentMessage) {
+            // Start new assistant message
+            currentMessage = {
+              id: event.data.id,
+              threadId: event.data.thread_id,
+              agent: event.data.agent,
+              role: "assistant",
+              content: "",
+              contentChunks: [],
+              isStreaming: true,
+            };
+            callbacks.onMessageStart?.(currentMessage);
           }
 
-          if (currentMessage && event.data.finish_reason) {
-            currentMessage = {
-              ...currentMessage,
-              isStreaming: false,
-              finishReason: event.data.finish_reason,
-            };
+          // Use mergeMessage to handle the event
+          currentMessage = mergeMessage(currentMessage, event);
+          callbacks.onMessageUpdate?.(currentMessage);
+
+          // Check if message is complete
+          if (!currentMessage.isStreaming) {
             callbacks.onMessageComplete?.(currentMessage);
             currentMessage = null;
           }
         }
 
         if (currentMessage) {
-          currentMessage = {
-            ...currentMessage,
-            isStreaming: false,
-            finishReason: "stop",
-          };
+          currentMessage.isStreaming = false;
+          currentMessage.finishReason = "stop";
           callbacks.onMessageComplete?.(currentMessage);
         }
       } catch (err) {

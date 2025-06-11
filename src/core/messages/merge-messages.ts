@@ -19,7 +19,6 @@ export function mergeMessage(message: Message, event: ChatEvent) {
   } else if (event.type === "interrupt") {
     mergeInterruptMessage(message, event);
   }
-  console.log(event);
   if (event.data.finish_reason) {
     message.finishReason = event.data.finish_reason;
     message.isStreaming = false;
