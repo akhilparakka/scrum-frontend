@@ -11,7 +11,7 @@ import Main from "./main";
 export default function HomePage() {
   return (
     <div className="flex h-screen w-screen justify-center overscroll-none">
-      <header className="fixed top-0 left-0 flex h-12 w-full items-center justify-between px-4">
+      <header className="fixed top-0 left-0 flex h-12 w-full items-center justify-between px-4 z-50 bg-background border-b">
         <Logo />
         <div className="flex items-center">
           <Button variant="ghost" size="icon" asChild>
