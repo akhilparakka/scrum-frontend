@@ -19,6 +19,7 @@ export interface Message {
   finishReason?: "stop" | "interrupt" | "tool_calls";
   interruptFeedback?: string;
   resources?: Array<Resource>;
+  sections?: Array<Section>;
 }
 
 export interface Option {
@@ -37,4 +38,10 @@ export interface ToolCallRuntime {
 export interface Resource {
   uri: string;
   title: string;
+}
+
+export interface Section {
+  name: string;
+  content: string;
+  source_str?: string;
 }

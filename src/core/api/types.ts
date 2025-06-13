@@ -70,9 +70,20 @@ export interface InterruptEvent
     }
   > {}
 
+export interface SectionCompletedEvent
+  extends GenericEvent<
+    "section_completed",
+    {
+      section_name: string;
+      section_content: string;
+      source_str?: string;
+    }
+  > {}
+
 export type ChatEvent =
   | MessageChunkEvent
   | ToolCallsEvent
   | ToolCallChunksEvent
   | ToolCallResultEvent
-  | InterruptEvent;
+  | InterruptEvent
+  | SectionCompletedEvent;

@@ -4,18 +4,12 @@ import type { Message } from "../messages/types";
 import type { ChatEvent } from "../api";
 
 export interface ChatRequest {
-  messages: Array<{
-    role: "user" | "assistant";
-    content: string;
-  }>;
-  debug?: boolean;
+  message: string;
   thread_id?: string;
-  max_plan_iterations?: number;
-  max_step_num?: number;
-  auto_accepted_plan?: boolean;
-  interrupt_feedback?: string | null;
-  mcp_settings?: Record<string, unknown>;
-  enable_background_investigation?: boolean;
+  already_clarified_topic?: boolean;
+  max_search_iterations?: number;
+  auto_accept_plan?: boolean;
+  interrupt_feedback?: string;
 }
 
 export interface ChatServiceCallbacks {
@@ -37,13 +31,10 @@ export class ChatService {
     userMessage: string,
     params: {
       thread_id: string;
-      auto_accepted_plan: boolean;
-      max_plan_iterations: number;
-      max_step_num: number;
-      max_search_results?: number;
+      already_clarified_topic?: boolean;
+      max_search_iterations?: number;
+      auto_accept_plan?: boolean;
       interrupt_feedback?: string;
-      enable_background_investigation: boolean;
-      mcp_settings: {};
     },
     options: { abortSignal?: AbortSignal } = {},
   ) {
@@ -51,7 +42,7 @@ export class ChatService {
 
     const stream = fetchStream(url, {
       body: JSON.stringify({
-        messages: [{ role: "user", content: userMessage }],
+        message: userMessage || "",
         ...params,
       }),
       signal: options.abortSignal,
@@ -77,11 +68,10 @@ export class ChatService {
 
     const params = {
       thread_id: "__default",
-      auto_accepted_plan: true,
-      max_plan_iterations: 3,
-      max_step_num: 10,
-      enable_background_investigation: false,
-      mcp_settings: {},
+      already_clarified_topic: false,
+      max_search_iterations: 3,
+      auto_accept_plan: true,
+      interrupt_feedback: "",
     };
 
     let currentMessage: Message | null = null;
@@ -118,6 +108,27 @@ export class ChatService {
               name: tc.name,
               args: tc.args,
             }));
+            callbacks?.onMessageUpdate?.(currentMessage);
+          }
+          break;
+
+        case "section_completed":
+          if (currentMessage) {
+            // Initialize sections array if it doesn't exist
+            if (!currentMessage.sections) {
+              currentMessage.sections = [];
+            }
+
+            // Add the completed section to the sections array
+            currentMessage.sections.push({
+              name: event.data.section_name,
+              content: event.data.section_content,
+              source_str: event.data.source_str,
+            });
+
+            const sectionInfo = `\n\n**Section Completed: ${event.data.section_name}**\n${event.data.section_content}`;
+            currentMessage.content += sectionInfo;
+            currentMessage.contentChunks.push(sectionInfo);
             callbacks?.onMessageUpdate?.(currentMessage);
           }
           break;

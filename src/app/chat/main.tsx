@@ -1,20 +1,39 @@
 "use client";
 import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor";
 import { useState, useRef, KeyboardEvent, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Send } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Send,
+  BarChart3,
+  MessageSquare,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useChat } from "@/core/chat";
 import type { Message } from "@/core/messages/types";
 import { MessageComponent } from "@/components/chat/message";
+import { ReportGenerator } from "@/components/report-generator";
+import { ApiTest } from "@/components/report-generator/api-test";
 
 export default function Main() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [activeMode, setActiveMode] = useState<"chat" | "report" | "api-test">(
+    "chat",
+  );
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { messages, isLoading, error, sendMessage, clearError } = useChat({
+  const {
+    messages,
+    isLoading,
+    error,
+    isInterruptPending,
+    sendMessage,
+    sendInterruptResponse,
+    clearError,
+  } = useChat({
     onError: (error) => {
       console.error("Chat error:", error);
     },
@@ -39,7 +58,11 @@ export default function Main() {
     }
 
     try {
-      await sendMessage(messageToSend);
+      if (isInterruptPending) {
+        await sendInterruptResponse(messageToSend);
+      } else {
+        await sendMessage(messageToSend);
+      }
     } catch (error) {
       console.error("Failed to send message:", error);
     }
@@ -62,8 +85,23 @@ export default function Main() {
     target.style.height = Math.min(target.scrollHeight, 200) + "px";
   };
 
+  const handleOptionSelect = async (option: {
+    text: string;
+    value: string;
+  }) => {
+    try {
+      await sendInterruptResponse(option.value);
+    } catch (error) {
+      console.error("Failed to send interrupt response:", error);
+    }
+  };
+
   const renderMessage = (message: Message) => (
-    <MessageComponent key={message.id} message={message} />
+    <MessageComponent
+      key={message.id}
+      message={message}
+      onOptionSelect={handleOptionSelect}
+    />
   );
 
   const mainContentVariants = {
@@ -125,145 +163,201 @@ export default function Main() {
 
   return (
     <div className="relative w-full h-full overflow-hidden">
+      {/* Mode Toggle Bar */}
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50">
+        <div className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg p-1 flex">
+          <Button
+            onClick={() => setActiveMode("chat")}
+            variant={activeMode === "chat" ? "default" : "ghost"}
+            size="sm"
+            className="text-sm"
+          >
+            <MessageSquare size={16} className="mr-2" />
+            Chat
+          </Button>
+          <Button
+            onClick={() => setActiveMode("report")}
+            variant={activeMode === "report" ? "default" : "ghost"}
+            size="sm"
+            className="text-sm"
+          >
+            <BarChart3 size={16} className="mr-2" />
+            Report Generator
+          </Button>
+          <Button
+            onClick={() => setActiveMode("api-test")}
+            variant={activeMode === "api-test" ? "default" : "ghost"}
+            size="sm"
+            className="text-sm"
+          >
+            🧪 API Test
+          </Button>
+        </div>
+      </div>
+
       <motion.div
         className="h-full bg-background flex flex-col"
         variants={mainContentVariants}
         animate={isEditorOpen ? "half" : "full"}
         initial="full"
       >
-        <div className="flex-1 overflow-y-auto pt-20 pb-4">
-          <div className="max-w-3xl mx-auto px-4">
-            {messages.length === 0 ? (
-              <div className="text-center py-8">
-                <h1 className="text-2xl font-bold mb-4">Welcome to Chat</h1>
-                <p className="text-muted-foreground">
-                  Start a conversation or click the arrow to open the editor
-                  panel.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {messages.map(renderMessage)}
-                {isLoading && messages.length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex justify-start mb-4"
-                  >
-                    <div className="max-w-[80%] bg-card text-card-foreground border rounded-lg px-4 py-3 shadow-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="flex space-x-1">
-                          <motion.div
-                            className="w-2 h-2 bg-current rounded-full"
-                            animate={{ opacity: [0.3, 1, 0.3] }}
-                            transition={{
-                              duration: 1.5,
-                              repeat: Infinity,
-                              delay: 0,
-                            }}
-                          />
-                          <motion.div
-                            className="w-2 h-2 bg-current rounded-full"
-                            animate={{ opacity: [0.3, 1, 0.3] }}
-                            transition={{
-                              duration: 1.5,
-                              repeat: Infinity,
-                              delay: 0.5,
-                            }}
-                          />
-                          <motion.div
-                            className="w-2 h-2 bg-current rounded-full"
-                            animate={{ opacity: [0.3, 1, 0.3] }}
-                            transition={{
-                              duration: 1.5,
-                              repeat: Infinity,
-                              delay: 1,
-                            }}
-                          />
-                        </div>
-                        <span className="text-sm opacity-70">
-                          Claude is thinking...
-                        </span>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-                {error && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-destructive/10 border border-destructive/20 rounded-lg p-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="text-destructive">
-                        <strong>Error:</strong> {error.message}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={clearError}
-                        className="text-destructive hover:text-destructive/80"
-                      >
-                        ✕
-                      </Button>
-                    </div>
-                  </motion.div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t bg-background">
-          <div className="max-w-3xl mx-auto p-4">
-            <div className="relative">
-              <textarea
-                ref={textareaRef}
-                placeholder={
-                  isLoading ? "Claude is thinking..." : "Message Claude..."
-                }
-                className="w-full min-h-[60px] max-h-[200px] p-4 pr-12 rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent disabled:opacity-60"
-                rows={1}
-                value={inputValue}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                disabled={isLoading}
-                style={{
-                  scrollbarWidth: "thin",
-                }}
-              />
-              <button
-                className="absolute right-3 bottom-3 p-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-                disabled={
-                  !inputValue.trim() || isLoading || inputValue.length > 2000
-                }
-                onClick={handleSendMessage}
-                title={
-                  inputValue.length > 2000 ? "Message too long" : "Send message"
-                }
-              >
-                {isLoading ? (
-                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        {activeMode === "chat" ? (
+          <>
+            <div className="flex-1 overflow-y-auto pt-20 pb-4">
+              <div className="max-w-3xl mx-auto px-4">
+                {messages.length === 0 ? (
+                  <div className="text-center py-8">
+                    <h1 className="text-2xl font-bold mb-4">Welcome to Chat</h1>
+                    <p className="text-muted-foreground">
+                      Start a conversation or click the arrow to open the editor
+                      panel.
+                    </p>
+                  </div>
                 ) : (
-                  <Send size={16} />
+                  <div className="space-y-2">
+                    {messages.map(renderMessage)}
+                    {isLoading && messages.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex justify-start mb-4"
+                      >
+                        <div className="max-w-[80%] bg-card text-card-foreground border rounded-lg px-4 py-3 shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <div className="flex space-x-1">
+                              <motion.div
+                                className="w-2 h-2 bg-current rounded-full"
+                                animate={{ opacity: [0.3, 1, 0.3] }}
+                                transition={{
+                                  duration: 1.5,
+                                  repeat: Infinity,
+                                  delay: 0,
+                                }}
+                              />
+                              <motion.div
+                                className="w-2 h-2 bg-current rounded-full"
+                                animate={{ opacity: [0.3, 1, 0.3] }}
+                                transition={{
+                                  duration: 1.5,
+                                  repeat: Infinity,
+                                  delay: 0.5,
+                                }}
+                              />
+                              <motion.div
+                                className="w-2 h-2 bg-current rounded-full"
+                                animate={{ opacity: [0.3, 1, 0.3] }}
+                                transition={{
+                                  duration: 1.5,
+                                  repeat: Infinity,
+                                  delay: 1,
+                                }}
+                              />
+                            </div>
+                            <span className="text-sm opacity-70">
+                              Claude is thinking...
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-destructive/10 border border-destructive/20 rounded-lg p-4"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-destructive">
+                            <strong>Error:</strong> {error.message}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearError}
+                            className="text-destructive hover:text-destructive/80"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      </motion.div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
                 )}
-              </button>
+              </div>
             </div>
-            <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>
-                {isLoading
-                  ? "Claude is responding..."
-                  : "Press Enter to send, Shift+Enter for new line"}
-              </span>
-              <span
-                className={inputValue.length > 1800 ? "text-destructive" : ""}
-              >
-                {inputValue.length} / 2000
-              </span>
+
+            <div className="border-t bg-background">
+              <div className="max-w-3xl mx-auto p-4">
+                <div className="relative">
+                  <textarea
+                    ref={textareaRef}
+                    placeholder={
+                      isLoading
+                        ? "Claude is thinking..."
+                        : isInterruptPending
+                          ? "Respond to the interrupt..."
+                          : "Message Claude..."
+                    }
+                    className="w-full min-h-[60px] max-h-[200px] p-4 pr-12 rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent disabled:opacity-60"
+                    rows={1}
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    disabled={isLoading}
+                    style={{
+                      scrollbarWidth: "thin",
+                    }}
+                  />
+                  <button
+                    className="absolute right-3 bottom-3 p-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    disabled={
+                      !inputValue.trim() ||
+                      isLoading ||
+                      inputValue.length > 2000
+                    }
+                    onClick={handleSendMessage}
+                    title={
+                      inputValue.length > 2000
+                        ? "Message too long"
+                        : "Send message"
+                    }
+                  >
+                    {isLoading ? (
+                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Send size={16} />
+                    )}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+                  <span>
+                    {isLoading
+                      ? "Claude is responding..."
+                      : isInterruptPending
+                        ? "Responding to interrupt - Press Enter to send"
+                        : "Press Enter to send, Shift+Enter for new line"}
+                  </span>
+                  <span
+                    className={
+                      inputValue.length > 1800 ? "text-destructive" : ""
+                    }
+                  >
+                    {inputValue.length} / 2000
+                  </span>
+                </div>
+              </div>
             </div>
+          </>
+        ) : activeMode === "report" ? (
+          <div className="flex-1 pt-20">
+            <ReportGenerator />
           </div>
-        </div>
+        ) : (
+          <div className="flex-1 pt-20">
+            <ApiTest />
+          </div>
+        )}
       </motion.div>
 
       <motion.div

@@ -13,7 +13,9 @@ export interface UseChatReturn {
   messages: Message[];
   isLoading: boolean;
   error: Error | null;
+  isInterruptPending: boolean;
   sendMessage: (content: string) => Promise<void>;
+  sendInterruptResponse: (response: string) => Promise<void>;
   clearMessages: () => void;
   clearError: () => void;
 }
@@ -22,6 +24,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [isInterruptPending, setIsInterruptPending] = useState(false);
 
   const chatServiceRef = useRef(
     new ChatService(options.baseUrl || process.env.NEXT_PUBLIC_API_URL),
@@ -35,10 +38,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
+    setIsInterruptPending(false);
   }, []);
 
-  const sendMessage = useCallback(
-    async (content: string) => {
+  const sendMessageInternal = useCallback(
+    async (content: string, isInterruptResponse: boolean = false) => {
       if (isLoading || !content.trim()) {
         return;
       }
@@ -50,42 +54,86 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       setIsLoading(true);
       setError(null);
 
-      // Create user message
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        threadId: options.threadId || "__default",
-        role: "user",
-        content: content.trim(),
-        contentChunks: [content.trim()],
-        isStreaming: false,
-      };
+      // If this is an interrupt response, clear the interrupt state
+      if (isInterruptResponse) {
+        setIsInterruptPending(false);
+      }
 
-      // Add user message immediately
-      setMessages((prev) => [...prev, userMessage]);
+      // Create user message only if it's not an interrupt response
+      if (!isInterruptResponse) {
+        const userMessage: Message = {
+          id: `user-${Date.now()}`,
+          threadId: options.threadId || "__default",
+          role: "user",
+          content: content.trim(),
+          contentChunks: [content.trim()],
+          isStreaming: false,
+        };
 
-      // Prepare conversation history for future use if needed
-      const conversationMessages = [...messages, userMessage].map((msg) => ({
-        role: msg.role as "user" | "assistant",
-        content: msg.content,
-      }));
+        // Add user message immediately
+        setMessages((prev) => [...prev, userMessage]);
+      }
 
       // Create new abort controller for this request
       abortControllerRef.current = new AbortController();
 
       const callbacks: ChatServiceCallbacks = {
         onMessageStart: (message: Message) => {
-          setMessages((prev) => [...prev, message]);
+          setMessages((prev) => {
+            // Check if message already exists
+            const existingMessage = prev.find((msg) => msg.id === message.id);
+            if (existingMessage) {
+              console.log("⚠️ Message already exists, skipping onMessageStart");
+              return prev;
+            }
+            return [...prev, message];
+          });
         },
         onMessageUpdate: (message: Message) => {
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === message.id ? { ...message } : msg)),
-          );
+          setMessages((prev) => {
+            const newMessages = prev.map((msg) =>
+              msg.id === message.id ? { ...message } : msg,
+            );
+            const updatedMessage = newMessages.find((m) => m.id === message.id);
+            if (!updatedMessage) {
+              console.log("⚠️ Message not found for update, adding it");
+              return [...prev, message];
+            }
+            return newMessages;
+          });
         },
         onMessageComplete: (message: Message) => {
+          console.log("🔔 Message completed:", {
+            id: message.id,
+            agent: message.agent,
+            finishReason: message.finishReason,
+            hasOptions: !!(message.options && message.options.length > 0),
+            content: message.content.substring(0, 100) + "...",
+          });
+
           setMessages((prev) =>
             prev.map((msg) => (msg.id === message.id ? { ...message } : msg)),
           );
           setIsLoading(false);
+
+          // Improved interrupt detection
+          const isInterrupt =
+            message.finishReason === "interrupt" ||
+            (message.options && message.options.length > 0) ||
+            (message.agent &&
+              (message.agent.includes("clarify") ||
+                message.agent === "clarify_with_user"));
+
+          console.log("🔔 Interrupt detection:", {
+            isInterrupt,
+            reason: message.finishReason,
+            agent: message.agent,
+          });
+
+          if (isInterrupt) {
+            console.log("🚨 Setting interrupt pending to true");
+            setIsInterruptPending(true);
+          }
         },
         onError: (err: Error) => {
           setError(err);
@@ -101,11 +149,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         // Set up parameters for the stream
         const params = {
           thread_id: options.threadId || "__default",
-          auto_accepted_plan: true,
-          max_plan_iterations: 3,
-          max_step_num: 10,
-          enable_background_investigation: false,
-          mcp_settings: {},
+          already_clarified_topic: false,
+          max_search_iterations: 3,
+          auto_accept_plan: true,
+          interrupt_feedback: isInterruptResponse ? content.trim() : "",
         };
 
         // Track current assistant message being built
@@ -113,12 +160,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
         // Stream the response
         for await (const event of chatServiceRef.current.streamChat(
-          latestUserMessage,
+          isInterruptResponse ? "" : latestUserMessage,
           params,
           { abortSignal: abortControllerRef.current.signal },
         )) {
-          console.log(event, "Checkkk");
-          if (!currentMessage) {
+          console.log("📥 Received event:", {
+            type: event.type,
+            id: event.data.id,
+            agent: event.data.agent,
+            finishReason: event.data.finish_reason,
+            hasContent: !!event.data.content,
+          });
+
+          // Check if we need to start a new message or if this is a new message ID
+          if (!currentMessage || currentMessage.id !== event.data.id) {
+            // If we had a previous message that wasn't completed, complete it
+            if (currentMessage) {
+              currentMessage.isStreaming = false;
+              currentMessage.finishReason = "stop";
+              callbacks.onMessageComplete?.(currentMessage);
+            }
+
             // Start new assistant message
             currentMessage = {
               id: event.data.id,
@@ -139,10 +201,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           // Check if message is complete
           if (!currentMessage.isStreaming) {
             callbacks.onMessageComplete?.(currentMessage);
-            currentMessage = null;
+            // Don't set currentMessage to null immediately - let it be handled by the next iteration or completion
           }
         }
 
+        // Final cleanup - ensure any remaining message is completed
         if (currentMessage) {
           currentMessage.isStreaming = false;
           currentMessage.finishReason = "stop";
@@ -158,11 +221,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     [isLoading, messages, options],
   );
 
+  const sendMessage = useCallback(
+    async (content: string) => {
+      await sendMessageInternal(content, false);
+    },
+    [sendMessageInternal],
+  );
+
+  const sendInterruptResponse = useCallback(
+    async (response: string) => {
+      await sendMessageInternal(response, true);
+    },
+    [sendMessageInternal],
+  );
+
   return {
     messages,
     isLoading,
     error,
+    isInterruptPending,
     sendMessage,
+    sendInterruptResponse,
     clearMessages,
     clearError,
   };
